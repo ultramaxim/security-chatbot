@@ -2,10 +2,12 @@ import telebot
 from telebot import types
 import requests,json,re
 
-bot = telebot.TeleBot('')
+bot = telebot.TeleBot(')
 
 chat_id = {}
 markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+check_done = False
+
 @bot.message_handler(commands=['start'])
 def start(message):
 
@@ -14,7 +16,7 @@ def start(message):
     btn1 = types.KeyboardButton("Проверить уязвимости в библиотеке разработки (python, java, go, npm)")
     markup.add(btn1)
     bot.send_message(message.from_user.id, "👋 Привет! Пока здесь ты можешь проверить библиотеки разработки на уязвимости, дальше функционал будет расширяться", reply_markup=markup)
-
+    check_done = False
 
 @bot.message_handler(commands=['check_package'])
 def check_package(message):
@@ -34,9 +36,11 @@ def check_package(message):
 def get_text_messages(message):
 
   
-    global chat_id, markup    
+    global chat_id, markup, check_done
+    
     if message.text == 'Проверить уязвимости в библиотеке разработки (python, java, go, npm)':
         
+        check_done = False
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True) #создание новых кнопок
         btn1 = types.KeyboardButton('npm')
         btn2 = types.KeyboardButton('maven')
@@ -45,14 +49,29 @@ def get_text_messages(message):
         markup.add(btn1, btn2, btn3,btn4)
         bot.send_message(message.from_user.id, 'выбери язык разработки', reply_markup=markup) #ответ бота
         if message.chat.id in chat_id: del chat_id[message.chat.id]
-    elif message.chat.id in chat_id:
+    elif message.chat.id in chat_id and not check_done:
         #print("in elif in 33 line")
         #print(chat_id)
         #print("going to run get_version")
         
         if 'packet' in chat_id[message.chat.id]:
             if 'packet_version' in chat_id[message.chat.id]:
-                check_version(message)
+                result = check_version(str(chat_id[message.chat.id]['type_packet']),str(chat_id[message.chat.id]['packet']),message.text, False)
+                if result:
+                    chat_id[message.chat.id]['version_of_packet']=message.text
+                    check_done = True
+                    global markup2
+                    markup2 = types.ReplyKeyboardMarkup()
+                    btn1 = types.KeyboardButton('DoS не критичен')
+                    btn2 = types.KeyboardButton('Версия без уязвимостей (с DoS)')
+                    btn3 = types.KeyboardButton('Версия без уязвимостей (без DoS)')
+                    markup2.add(btn1) 
+                    markup2.add(btn2) 
+                    markup2.add(btn3) 
+                    bot.send_message(message.from_user.id, result,reply_markup=markup2)
+                    
+                else:
+                    bot.send_message(message.from_user.id, "Версия "+message.text+" пакета "+ str(chat_id[message.chat.id]['packet'])+" отсутствует в репозитории "+str(chat_id[message.chat.id]['type_packet']), reply_markup=markup)
                 
         else:
             get_version(message)
@@ -65,8 +84,16 @@ def get_text_messages(message):
         #print(chat_id[message.chat.id]['type_packet'])
         bot.send_message(message.from_user.id, 'Введите название пакета', reply_markup=markup)
   
+    elif message.text == "DoS не критичен" and check_done :
+        result = check_version(str(chat_id[message.chat.id]['type_packet']),str(chat_id[message.chat.id]['packet']),str(chat_id[message.chat.id]['version_of_packet']),True)
+       
+        bot.send_message(message.from_user.id, result,reply_markup=markup2)
+        #if call.data == "Версия без уязвимостей (с DoS)":
+        #    bot.send_message(chat_id=call.message.chat.id, message_id=call.message.message_id, text="Пыщь 2")
+        #if call.data == "Версия без уязвимостей (без DoS)":
+        #    bot.send_message(chat_id=call.message.chat.id, message_id=call.message.message_id, text="Пыщь 2"):
+        #markup = types.ForceReply(selective=False)
     else:
-        markup = types.ForceReply(selective=False)
         bot.send_message(message.from_user.id, 'Что-то пошло не так, попробуй снова или выбери другой пакет',reply_markup=markup)
 
 
@@ -86,38 +113,23 @@ def get_version(message):
         tmp_dict = {"packet_version":"yes"}
         chat_id[message.chat.id].update(tmp_dict)
 
-def check_version(message):
-    url = 'https://api.deps.dev/v3alpha/systems/'+str(chat_id[message.chat.id]['type_packet'])+'/packages/'+str(chat_id[message.chat.id]['packet'])+'/versions/'+message.text
+def check_version(type_packet,packet,packet_version,dos):
+    url = 'https://api.deps.dev/v3alpha/systems/'+str(type_packet)+'/packages/'+str(packet)+'/versions/'+packet_version
     #print("func check_version, try to curl "+url)
     resp = requests.get(url)
     #print(resp.text)
 
     if (resp.status_code == 404):
-        bot.send_message(message.from_user.id, "Версия "+message.text+" пакета "+ str(chat_id[message.chat.id]['packet'])+" отсутствует в репозитории "+str(chat_id[message.chat.id]['type_packet']), reply_markup=markup) 
+        #bot.send_message(message.from_user.id, "Версия "+message.text+" пакета "+ str(chat_id[message.chat.id]['packet'])+" отсутствует в репозитории "+str(chat_id[message.chat.id]['type_packet']), reply_markup=markup) 
+        return False
     else:
-
-        #resp_parse = json.loads(resp.text)
-        #adv = get_advisories(resp_parse)
-        #deps = get_depencies(str(chat_id[message.chat.id]['type_packet']),str(chat_id[message.chat.id]['packet']),message.text)
-        #for i in deps:
-        show_vulns(get_full_packet_vulns(str(chat_id[message.chat.id]['type_packet']),str(chat_id[message.chat.id]['packet']),message.text),message)   
+       
+        result = show_vulns(get_full_packet_vulns(str(type_packet),str(packet),str(packet_version),dos))  
         
-        #if adv == "no vuln's":
-        #    bot.send_message(message.from_user.id, 'В указанном пакете нет уязвимостей!',reply_markup=markup)
-        #else:
-        #    bot.send_message(message.from_user.id, 'В указанном пакете есть уязвимости...')
-        #    for i in adv:
-        #        bot.send_message(message.from_user.id, "CVSS скоринг: "+str(i['cvss3Score'])+", CVE: "+str(i['aliases'])+", Описание: "+str(i['title']))
-        #    markup2 = types.ReplyKeyboardMarkup(resize_keyboard=False)
-        #    btn1 = types.KeyboardButton('DoS-не критичен')
-        #    btn2 = types.KeyboardButton('Подобрать версию без уязвимостей (DoS не критичен)')
-        #    btn3 = types.KeyboardButton('Подобрать пакет без уязвимостей (DoS критичен)')
-        #    markup2.add(btn1, btn2, btn3)
-        #    bot.send_message(message.from_user.id, 'обрати внимание на дополнительные опции по анализу', reply_markup=markup2)
-        #    print(get_depencies(str(chat_id[message.chat.id]['type_packet']),str(chat_id[message.chat.id]['packet']),message.text))
+        return result
 
 
-def show_vulns(dict, message):
+def show_vulns(dict):
     direct_flag = True
     indirect_flag = True
     exist_direct = False
@@ -130,80 +142,120 @@ def show_vulns(dict, message):
     direct_exist_vuln = False
     indirect_exist_vuln = False
 
+    #print(dict)
+
     for i in dict:
         if dict[i]['relation']=="DIRECT":
             exist_direct = True
         if dict[i]['relation'] == "INDIRECT":
             exist_indirect = True
-    #print (dict)
+    result_string = ""
     for i in dict:
         flag_policy = False            
         
         if dict[i]['vulns'] != "no vuln's":
             if dict[i]['relation'] == "SELF": 
-                bot.send_message(message.from_user.id, 'Уязвимости в самом пакете:', reply_markup=markup)
+                
+                result_string+='Уязвимости в самом пакете:\n\n'
+            #bot.send_message(message.from_user.id, 'Уязвимости в самом пакете:', reply_markup=markup)
 
                 self_exist_vuln = True
                 for j in dict[i]['vulns']:
                     vulns = dict[i]['vulns'][j]
                     
-                    if str(vulns['severity'])=="high" or str(vulns['severity'])=="critical":       
-                        print(vulns)
+                    if str(vulns['severity'])=="high":
                         self_has_vuln = True
-                        bot.send_message(message.from_user.id, dict[i]['name']+' - '+dict[i]['version'] +" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity']))
-        
+                        result_string+="🟠 "+dict[i]['name']+' - '+dict[i]['version'] +" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity'])+"\n"
+                    elif str(vulns['severity'])=="critical":
+                        self_has_vuln = True
+                        result_string+="🔴 "+dict[i]['name']+' - '+dict[i]['version'] +" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity'])+"\n"
+                         
             if dict[i]['relation'] == "DIRECT":
+                #print(dict[i]['name'])
                 if (exist_direct and direct_flag):
-                    bot.send_message(message.from_user.id, 'Уязвимости в прямых зависимостях:', reply_markup=markup)
+                    result_string+="\nУязвимости в прямых зависимостях:\n\n"
+                    #bot.send_message(message.from_user.id, 'Уязвимости в прямых зависимостях:', reply_markup=markup)
                 direct_flag = False
             
                 for j in dict[i]['vulns']:
                     vulns = dict[i]['vulns'][j]
                     
-                    if str(vulns['severity'])=="high" or str(vulns['severity'])=="critical":       
+                    #if str(vulns['severity'])=="high" or str(vulns['severity'])=="critical":       
+                    if str(vulns['severity'])=="high": 
                         direct_has_vuln = True
-                        bot.send_message(message.from_user.id, dict[i]['name']+' - '+dict[i]['version'] +" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity']))
-        
+                        result_string+="🟠 Пакет "+dict[i]['name']+' - '+dict[i]['version'] +" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity'])+"\n"
+                        #bot.send_message(message.from_user.id, "Пакет "+dict[i]['name']+' - '+dict[i]['version'] +" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity']))
+                    if str(vulns['severity'])=="critical": 
+                        direct_has_vuln = True
+                        result_string+="🔴 Пакет "+dict[i]['name']+' - '+dict[i]['version'] +" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity'])+"\n"
+                        #bot.send_message(message.from_user.id, "Пакет "+dict[i]['name']+' - '+dict[i]['version'] +" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity']))
+            
+            
             if dict[i]['relation'] == "INDIRECT":
                 if (exist_indirect and indirect_flag):
-                    bot.send_message(message.from_user.id, 'Уязвимости в транзитивных зависимостях:', reply_markup=markup)
+                    result_string+='\nУязвимости в транзитивных зависимостях:\n\n'
+                    #bot.send_message(message.from_user.id, 'Уязвимости в транзитивных зависимостях:', reply_markup=markup)
                 indirect_flag = False
             
                 for j in dict[i]['vulns']:
                     vulns = dict[i]['vulns'][j]
                     
-                    if str(vulns['severity'])=="high" or str(vulns['severity'])=="critical":       
+                    if str(vulns['severity'])=="high":       
                         indirect_has_vuln = True
-                        bot.send_message(message.from_user.id, dict[i]['name']+' - '+dict[i]['version']+" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity']))
+                        result_string+="🟠 Пакет "+dict[i]['name']+' - '+dict[i]['version']+" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity'])+"\n"
+                        #bot.send_message(message.from_user.id, "Пакет "+dict[i]['name']+' - '+dict[i]['version']+" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity']))
+                    if str(vulns['severity'])=="critical":       
+                        indirect_has_vuln = True
+                        result_string+="🔴 Пакет "+dict[i]['name']+' - '+dict[i]['version']+" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity'])+"\n"
+                        #bot.send_message(message.from_user.id, "Пакет "+dict[i]['name']+' - '+dict[i]['version']+" CVSS скоринг: "+str(vulns['CVSS скоринг'])+", CVE: "+str(vulns['CVE'])+", Описание: "+str(vulns['Описание'])+", уровень критичности: "+str(vulns['severity']))
         
 
         
         else:
                 if dict[i]['relation'] == "SELF":
                     if not self_exist_vuln:
-                        bot.send_message(message.from_user.id, 'В самом пакете '+dict[i]['name']+' - '+dict[i]['version'] +' нет высоких и критических уязвимостей',reply_markup=markup)
+                        result_string+='🟡 В самом пакете '+dict[i]['name']+' - '+dict[i]['version'] +' нет высоких и критических уязвимостей\n'
+                        #bot.send_message(message.from_user.id, '🟢 В самом пакете '+dict[i]['name']+' - '+dict[i]['version'] +' нет высоких и критических уязвимостей',reply_markup=markup)
                     else: 
-                        bot.send_message(message.from_user.id, 'В самом пакете '+dict[i]['name']+' - '+dict[i]['version'] +' вообще нет уязвимостей',reply_markup=markup)
+                        result_string+='🟢 В самом пакете '+dict[i]['name']+' - '+dict[i]['version'] +' вообще нет уязвимостей\n'
+                        #bot.send_message(message.from_user.id, '🟢 В самом пакете '+dict[i]['name']+' - '+dict[i]['version'] +' вообще нет уязвимостей',reply_markup=markup)
 
-                #if dict[i]['relation'] == "DIRECT" or dict[i]['relation'] == "INDIRECT" :
-                #    if not direct_has_vuln:
-                #        bot.send_message(message.from_user.id, 'Пакет '+dict[i]['name']+' - '+dict[i]['version'] +' не имеет высоких и критических уязвимостей',reply_markup=markup)
-                #    else:
-                #        bot.send_message(message.from_user.id, 'Пакет '+dict[i]['name']+' - '+dict[i]['version'] +' вообще не имеет уязвимостей',reply_markup=markup)
-        
-        
+                if dict[i]['relation'] == "DIRECT":
+                    if (exist_direct and direct_flag):
+                        result_string+='\nУязвимости в прямых зависимостях:\n\n'
+                        #bot.send_message(message.from_user.id, 'Уязвимости в прямых зависимостях:', reply_markup=markup)
+                        direct_flag = False
+                    if not direct_has_vuln:
+                        result_string+='🟡 Пакет '+dict[i]['name']+' - '+dict[i]['version'] +' не имеет высоких и критических уязвимостей\n'
+                        #bot.send_message(message.from_user.id, '🟢 Пакет '+dict[i]['name']+' - '+dict[i]['version'] +' не имеет высоких и критических уязвимостей',reply_markup=markup)
+               
+                if dict[i]['relation'] == "INDIRECT" :
+                    
+                    if (exist_indirect and indirect_flag):
+                        result_string+='\nУязвимости в транзитивных зависимостях:\n\n'
+                        #bot.send_message(message.from_user.id, 'Уязвимости в транзитивных зависимостях:', reply_markup=markup)
+                        indirect_flag = False 
+
+                    if direct_has_vuln:
+                        result_string+='🟢 Пакет '+dict[i]['name']+' - '+dict[i]['version'] +' вообще не имеет уязвимостей\n'
+                        #bot.send_message(message.from_user.id, '🟢 Пакет '+dict[i]['name']+' - '+dict[i]['version'] +' вообще не имеет уязвимостей',reply_markup=markup)
+    #print(result_string)
+    return result_string
         
 
-            
-
-        
-
+#def check_version_without_dos(packet_type, packet, packet_version):
+    #print(packet_type, packet, packet_version)
+    #dict = get_full_packet_vulns(packet_type, packet, packet_version)
+    #print(dict)
+ #   return True
     
-def get_full_packet_vulns(packet_type, packet, packet_version):
+    
+    
+def get_full_packet_vulns(packet_type, packet, packet_version,dos):
     result = {}
     deps = get_depencies(packet_type, packet, packet_version)
     for i in deps:
-        vulns = get_self_packet_vulns(deps[i]['type'],deps[i]['name'],deps[i]['version'])
+        vulns = get_self_packet_vulns(deps[i]['type'],deps[i]['name'],deps[i]['version'],dos)
         result[i]={"name":deps[i]['name'],"version":deps[i]['version'],"relation":deps[i]['relation'],"vulns":vulns}
     sorted_result = sort_vulns(result)
     #print(sorted_result)
@@ -227,7 +279,7 @@ def sort_vulns(dict):
     return return_dict
 
 
-def get_self_packet_vulns(packet_type, packet, packet_version):
+def get_self_packet_vulns(packet_type, packet, packet_version, dos):
     url = 'https://api.deps.dev/v3alpha/systems/'+packet_type+'/packages/'+packet+'/versions/'+packet_version
     resp = requests.get(url)
 
@@ -249,19 +301,23 @@ def get_self_packet_vulns(packet_type, packet, packet_version):
                 str4dict = {}
                 if x:
                     #dict[count]={"CVSS скоринг":str(i['cvss3Score']),"CVE":str(i['aliases']),"Описание":str(i['title']),"dos":"yes"}
-                    str4dict = {"CVSS скоринг":str(i['cvss3Score']),"CVE":str(i['aliases']),"Описание":str(i['title']),"dos":"yes"}
+                    if not dos:
+                        str4dict = {"CVSS скоринг":str(i['cvss3Score']),"CVE":str(i['aliases']),"Описание":str(i['title']),"dos":"yes"}
                 else:
                     str4dict={"CVSS скоринг":str(i['cvss3Score']),"CVE":str(i['aliases']),"Описание":str(i['title']),"dos":"no"}
                 score = float(i['cvss3Score'])
-                if score >= 7.0 and score < 8.5:
-                    str4dict.update({'severity':'high'})
-                elif score >= 8.5:
-                    str4dict.update({'severity':'critical'})
-                elif score >= 5.5 and score < 7.0:
-                    str4dict.update({'severity':'medium'})
+                if x and dos:
+                    pass
                 else:
-                    str4dict.update({'severity':'low'})
-                dict[count]=str4dict            
+                    if score >= 7.0 and score < 8.5:
+                        str4dict.update({'severity':'high'})
+                    elif score >= 8.5:
+                        str4dict.update({'severity':'critical'})
+                    elif score >= 5.5 and score < 7.0:
+                        str4dict.update({'severity':'medium'})
+                    else:
+                        str4dict.update({'severity':'low'})
+                    dict[count]=str4dict            
 
                 count+=1
             #print(dict)
