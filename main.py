@@ -2,9 +2,10 @@ import telebot
 from telebot import apihelper
 from telebot import types
 import requests, json, re, os
+from distutils.version import StrictVersion
 
 
-token = os.getenv('token')
+#token = os.getenv('token')
 
 bot = telebot.TeleBot(token)
 #apihelper.proxy = proxy
@@ -144,7 +145,8 @@ def got_clean_version(message):
         best_version_dos = ""
         best_version_no_dos = ""
         for i in chat_id[message.chat.id]['versions']:
-            if i['versionKey']['version'] == chat_id[message.chat.id]['version_of_packet']:
+            #if i['versionKey']['version'] == chat_id[message.chat.id]['version_of_packet']:
+            if i == chat_id[message.chat.id]['version_of_packet']:
                 my_version_number = count
             count +=1
         
@@ -153,19 +155,23 @@ def got_clean_version(message):
         
         else:
             for i in range(my_version_number+1,count):
-                result_dos = show_vulns(get_full_packet_vulns(chat_id[message.chat.id]['type_packet'],chat_id[message.chat.id]['packet'],str(chat_id[message.chat.id]['versions'][i]['versionKey']['version']),False))
+                #result_dos = show_vulns(get_full_packet_vulns(chat_id[message.chat.id]['type_packet'],chat_id[message.chat.id]['packet'],str(chat_id[message.chat.id]['versions'][i]['versionKey']['version']),False))
+                result_dos = show_vulns(get_full_packet_vulns(chat_id[message.chat.id]['type_packet'],chat_id[message.chat.id]['packet'],str(chat_id[message.chat.id]['versions'][i]),False))
                 policy_dos = re.search(r"уровень критичности: (high|critical)", result_dos, re.IGNORECASE)
                     
                 if not policy_dos:
                     if best_version_dos == "":
-                        best_version_dos = str(chat_id[message.chat.id]['versions'][i]['versionKey']['version'])
+                        #best_version_dos = str(chat_id[message.chat.id]['versions'][i]['versionKey']['version'])
+                        best_version_dos = str(chat_id[message.chat.id]['versions'][i])
             
-                result_without_dos = show_vulns(get_full_packet_vulns(chat_id[message.chat.id]['type_packet'],chat_id[message.chat.id]['packet'],str(chat_id[message.chat.id]['versions'][i]['versionKey']['version']),True))    
+                #result_without_dos = show_vulns(get_full_packet_vulns(chat_id[message.chat.id]['type_packet'],chat_id[message.chat.id]['packet'],str(chat_id[message.chat.id]['versions'][i]['versionKey']['version']),True))    
+                result_without_dos = show_vulns(get_full_packet_vulns(chat_id[message.chat.id]['type_packet'],chat_id[message.chat.id]['packet'],str(chat_id[message.chat.id]['versions'][i]),True))    
                 policy_without_dos = re.search(r"уровень критичности: (high|critical)", result_without_dos, re.IGNORECASE)
                 
                 if not policy_without_dos:
                     if best_version_no_dos == "":
-                        best_version_no_dos = str(chat_id[message.chat.id]['versions'][i]['versionKey']['version'])
+                        #best_version_no_dos = str(chat_id[message.chat.id]['versions'][i]['versionKey']['version'])
+                        best_version_no_dos = str(chat_id[message.chat.id]['versions'][i])
 
             bot.send_message(message.chat.id, "Анализ будет произведен для версии строго больше ранее указанной вами")
             
@@ -183,8 +189,10 @@ def got_clean_version(message):
 
 def show_versions(message):
     versions = ""
+    #for i in chat_id[message.chat.id]['versions']:
+    #    versions += i['versionKey']['version']+"\n"
     for i in chat_id[message.chat.id]['versions']:
-        versions += i['versionKey']['version']+"\n"
+        versions += i+"\n"
     return versions
 
 def send_package_name(message):
@@ -192,8 +200,12 @@ def send_package_name(message):
         #return False
         start(message)
         return False
+    if len(str(message.text))>255:
+        bot.send_message(message.chat.id, 'Слишком длинное имя пакета',reply_markup=keyboard)
+        print("слишком длинное имя пакета из чата "+message.chat.id)
+        return False
     global chat_id
-    if message.chat.id in chat_id:
+    if 'type_packet' in chat_id[message.chat.id]:
         url = 'https://api.deps.dev/v3alpha/systems/'+chat_id[message.chat.id]['type_packet']+'/packages/'+str(message.text).lower()
 
         print("попытка определить наличие пакета в репозитории следующей командой "+url+", запрос из чата "+str(message.chat.id))
@@ -205,7 +217,13 @@ def send_package_name(message):
             print("Пакет "+str(message.text).lower()+" отсутствует в репозитории "+chat_id[message.chat.id]['type_packet']+", запрос из чата "+str(message.chat.id))
         else:
             resp_parse = json.loads(resp.text)
-            tmp_dict = {"packet":str(message.text).lower(),"versions":resp_parse['versions']}
+            v_arr = []
+            for v in resp_parse['versions']:
+                v_arr.append(v['versionKey']['version'])    
+        
+            v_arr.sort(key=StrictVersion)
+            #print(v_arr)
+            tmp_dict = {"packet":str(message.text).lower(),"versions":v_arr}
             chat_id[message.chat.id].update(tmp_dict)
             bot.send_message(message.chat.id, 'Пакет найден в репозитории')
 
@@ -219,6 +237,8 @@ def send_package_name(message):
             keyboard.add(stupid_button)
             #keyboard.add(not_so_stupid_button)
             bot.send_message(message.chat.id, 'Теперь укажите версию проверяемого пакета',reply_markup=keyboard)
+    else:
+        bot.send_message(message.chat.id, 'Не выбран тип репозитория, начни с начала',reply_markup=keyboard)
        
 def send_package_version(message):
     if message.text == "/start":
